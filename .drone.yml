@@ -1,0 +1,21 @@
+workspace:
+  base: /go
+  path: src/github.com/uswitch/instance-signals
+
+pipeline:
+  build:
+    image: golang:1.9
+    commands:
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/cfn-signal cmd/cfn-signal/main.go
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/instance-healthcheck cmd/instance-healthcheck/main.go
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/request-and-match cmd/request-and-match/main.go
+
+  publish_release:
+    when:
+      event: tag
+    image: plugins/github-release
+    secrets: [ github_token ]
+    files:
+      - bin/cfn-signal
+      - bin/instance-healthcheck
+      - bin/request-and-match
