@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
@@ -17,6 +18,8 @@ var (
 	instanceIdFlag = kingpin.Flag("instance-id", "Instance id to mark").String()
 	stackNameFlag  = kingpin.Flag("stack-name", "Stack resource is a part of").String()
 	resourceIdFlag = kingpin.Flag("resource-id", "Id for the resource").String()
+	timeout        = kingpin.Flag("timeout", "Timeout, after which if no success it will fail").Default("5m").Duration()
+	commandSleep   = kingpin.Flag("command-sleep", "Time to sleep inbetween command executions").Default("10s").Duration()
 
 	command = kingpin.Arg("command", "Command to execute").Required().String()
 	args    = kingpin.Arg("arguments", "arguments to pass to command").Strings()
@@ -42,6 +45,23 @@ func getResourceTagValue(client *ec2.EC2, id, tag string) (string, error) {
 		return *resp.Tags[0].Value, nil
 	}
 	return "", fmt.Errorf("Couldn't find the tag '%s' for resource '%s'", tag, id)
+}
+
+func commandUntilSuccess(out chan bool, sleep time.Duration, command string, args []string) {
+	for {
+		cmd := exec.Command(command, args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err == nil {
+			out <- true
+			return
+		} else {
+			fmt.Printf("Command failed: %s\n", err)
+		}
+
+		time.Sleep(sleep)
+	}
 }
 
 func main() {
@@ -86,13 +106,16 @@ func main() {
 		}
 	}
 
-	cmd := exec.Command(*command, *args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	commandSuccessCh := make(chan bool)
+	timeoutCh := time.After(*timeout)
 
-	err = cmd.Run()
+	go commandUntilSuccess(commandSuccessCh, *commandSleep, *command, *args)
+
 	health := "SUCCESS"
-	if err != nil {
+
+	select {
+	case <-commandSuccessCh:
+	case <-timeoutCh:
 		health = "FAILURE"
 	}
 
